@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ESP32 Pin Controller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Orbitron:wght@700;900&display=swap" rel="stylesheet" />
+<style>
+/* ─── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg:       #070b0f;
+  --bg2:      #0d1117;
+  --bg3:      #111827;
+  --border:   #1e293b;
+  --border2:  #334155;
+  --text:     #e2e8f0;
+  --muted:    #64748b;
+  --dim:      #475569;
+  --cyan:     #06b6d4;
+  --cyan2:    #0891b2;
+  --blue:     #3b82f6;
+  --purple:   #8b5cf6;
+  --green:    #22c55e;
+  --amber:    #f59e0b;
+  --red:      #ef4444;
+  --font:     'JetBrains Mono', monospace;
+  --font-h:   'Orbitron', monospace;
+}
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  min-height: 100vh;
+}
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: var(--bg2); }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+button { cursor: pointer; font-family: var(--font); }
+input  { font-family: var(--font); }
+
+/* ─── Animations ───────────────────────────────────────────── */
+@keyframes shimmer { 0%,100%{opacity:.35} 50%{opacity:1} }
+@keyframes blink   { 0%,100%{opacity:1}  50%{opacity:.2} }
+@keyframes fadein  { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+@keyframes pulse   { 0%,100%{box-shadow:0 0 0 0 #22c55e44} 60%{box-shadow:0 0 0 6px #22c55e00} }
+@keyframes glow    { 0%,100%{box-shadow:0 0 8px #06b6d433} 50%{box-shadow:0 0 22px #06b6d488} }
+@keyframes spin    { to{transform:rotate(360deg)} }
+
+/* ─── Layout ───────────────────────────────────────────────── */
+#topbar {
+  position: sticky; top: 0; z-index: 200;
+  background: linear-gradient(180deg,#0d1117 0%,#07080fcc 100%);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 28px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  flex-wrap: wrap;
+}
+#content { padding: 22px 28px 40px; }
+
+/* ─── Top Bar ──────────────────────────────────────────────── */
+.brand { display:flex; align-items:center; gap:14px; }
+.brand-title { font-family:var(--font-h); font-size:20px; font-weight:900; color:var(--cyan); letter-spacing:.1em; text-shadow:0 0 24px #06b6d466; line-height:1; }
+.brand-sub   { font-size:9px; color:var(--border2); letter-spacing:.2em; text-transform:uppercase; margin-top:2px; }
+.divider     { width:1px; height:34px; background:var(--border); flex-shrink:0; }
+.status-dot  { width:8px; height:8px; border-radius:50%; transition:all .3s; }
+.status-dot.online  { background:var(--green); box-shadow:0 0 10px var(--green); animation:pulse 2s infinite; }
+.status-dot.offline { background:var(--red); }
+.status-text { font-size:11px; font-weight:700; letter-spacing:.1em; }
+.status-text.online  { color:var(--green); }
+.status-text.offline { color:var(--red); }
+
+.conn-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.ip-box {
+  display:flex; align-items:center; gap:6px;
+  background:var(--bg2); border:1px solid var(--border);
+  border-radius:8px; padding:6px 12px;
+}
+.ip-box span { font-size:10px; color:var(--dim); }
+#ip-input {
+  background:transparent; border:none; outline:none;
+  color:#94a3b8; font-size:12px; font-family:var(--font); width:130px;
+}
+.btn {
+  padding:8px 18px; border-radius:8px; font-size:11px; font-weight:700;
+  letter-spacing:.1em; text-transform:uppercase; border:1px solid; transition:all .15s;
+}
+.btn-connect    { background:linear-gradient(135deg,#164e63,#0e7490); border-color:#06b6d444; color:#67e8f9; }
+.btn-connect:hover { background:linear-gradient(135deg,#0e7490,#0891b2); }
+.btn-disconnect { background:linear-gradient(135deg,#7f1d1d,#991b1b); border-color:#ef444444; color:#fca5a5; }
+
+/* ─── Stats Row ────────────────────────────────────────────── */
+#stats {
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+  gap:10px; margin-bottom:20px;
+}
+.stat-card {
+  background:var(--bg2); border-radius:10px; padding:14px 16px;
+  position:relative; overflow:hidden; border:1px solid var(--border);
+  transition:border-color .2s;
+}
+.stat-card::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--accent),transparent);
+}
+.stat-label { font-size:10px; color:var(--muted); letter-spacing:.1em; text-transform:uppercase; margin-bottom:6px; }
+.stat-value { font-size:26px; font-weight:800; line-height:1; color:var(--accent); }
+.stat-sub   { font-size:10px; color:var(--border2); margin-top:4px; }
+
+/* ─── Main Grid ────────────────────────────────────────────── */
+#main { display:grid; grid-template-columns:1fr 300px; gap:20px; align-items:start; }
+@media(max-width:900px) { #main { grid-template-columns:1fr; } }
+
+/* ─── Filter Bar ───────────────────────────────────────────── */
+#filter-bar { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; align-items:center; }
+.filter-btn {
+  padding:5px 14px; font-size:10px; font-weight:700; letter-spacing:.1em;
+  text-transform:uppercase; border-radius:6px; border:1px solid; transition:all .15s;
+}
+.filter-btn.active { border-color:var(--cyan); background:#06b6d422; color:#67e8f9; }
+.filter-btn:not(.active) { border-color:var(--border); background:transparent; color:var(--dim); }
+#pin-count { margin-left:auto; font-size:10px; color:var(--border2); }
+
+/* ─── Pin Grid ─────────────────────────────────────────────── */
+#pin-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(192px,1fr));
+  gap:10px;
+}
+
+/* ─── Pin Card ─────────────────────────────────────────────── */
+.pin-card {
+  background:linear-gradient(145deg,var(--bg2),#0d1117);
+  border:1px solid var(--border); border-radius:12px; padding:14px;
+  position:relative; overflow:hidden; transition:all .2s;
+}
+.pin-card.high {
+  border-color:var(--cyan);
+  background:linear-gradient(145deg,#0f2027,#162032);
+  box-shadow:0 0 18px #06b6d422, inset 0 1px 0 #06b6d420;
+}
+.pin-card .top-line {
+  position:absolute; top:0; left:0; right:0; height:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+  opacity:0; transition:opacity .2s;
+  animation:shimmer 2s infinite;
+}
+.pin-card.high .top-line { opacity:1; }
+
+.pin-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+.pin-label  { font-size:13px; font-weight:700; letter-spacing:.04em; color:var(--muted); transition:color .2s; }
+.pin-card.high .pin-label { color:var(--text); }
+.pin-badge  {
+  font-size:8px; font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+  padding:2px 5px; border-radius:4px; margin-left:5px; vertical-align:middle;
+}
+.pin-special { font-size:10px; color:#475569; }
+.led {
+  width:11px; height:11px; border-radius:50%; flex-shrink:0;
+  background:var(--border); border:1px solid var(--border2); transition:all .2s; margin-top:2px;
+}
+.pin-card.high .led {
+  background:var(--cyan); border-color:var(--cyan);
+  box-shadow:0 0 10px var(--cyan), 0 0 22px #06b6d455;
+}
+
+/* ADC bar */
+.adc-wrap { margin-bottom:10px; }
+.adc-row  { display:flex; justify-content:space-between; font-size:10px; color:var(--muted); margin-bottom:3px; }
+.adc-track { height:5px; background:var(--bg); border-radius:3px; overflow:hidden; border:1px solid var(--border); }
+.adc-fill  { height:100%; border-radius:3px; background:linear-gradient(90deg,#06b6d4,#3b82f6); transition:width .35s ease; box-shadow:0 0 6px #06b6d444; }
+
+/* Mode selector */
+.mode-row  { display:flex; gap:5px; margin-bottom:10px; }
+.mode-btn  {
+  flex:1; padding:4px 0; font-size:9px; font-weight:700; letter-spacing:.08em;
+  text-transform:uppercase; border-radius:5px; border:1px solid; transition:all .15s;
+}
+.mode-btn.active { border-color:var(--blue); background:#3b82f622; color:#60a5fa; }
+.mode-btn:not(.active) { border-color:var(--border); background:transparent; color:var(--dim); }
+
+/* Toggle button */
+.toggle-btn {
+  width:100%; padding:8px 0; border-radius:8px; font-size:11px; font-weight:700;
+  letter-spacing:.1em; border:1px solid; transition:all .15s; margin-bottom:8px;
+}
+.toggle-btn.high { background:linear-gradient(135deg,#0891b2,#0e7490); border-color:var(--cyan); color:#e0f7fa; box-shadow:0 2px 12px #06b6d433; }
+.toggle-btn.low  { background:linear-gradient(135deg,var(--bg3),#0f172a); border-color:var(--border); color:var(--dim); }
+.toggle-btn:disabled { opacity:.4; cursor:not-allowed; }
+
+/* PWM */
+.pwm-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.pwm-btn {
+  font-size:9px; padding:3px 8px; border-radius:4px; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase; border:1px solid; transition:all .15s;
+}
+.pwm-btn.active { border-color:var(--purple); background:#8b5cf622; color:#a78bfa; }
+.pwm-btn:not(.active) { border-color:var(--border); background:transparent; color:var(--dim); }
+.pwm-pct { font-size:10px; color:#a78bfa; }
+input[type=range] {
+  width:100%; height:4px; border-radius:2px; cursor:pointer;
+  accent-color:var(--purple);
+}
+.input-only-badge {
+  padding:6px 10px; border-radius:6px; background:var(--bg);
+  border:1px solid var(--border); text-align:center; font-size:11px; color:var(--dim);
+  margin-top:6px;
+}
+
+/* ─── Side Panel ───────────────────────────────────────────── */
+#side { display:flex; flex-direction:column; gap:12px; position:sticky; top:80px; }
+
+/* Log Panel */
+#log-panel {
+  background:var(--bg2); border:1px solid var(--border); border-radius:12px; overflow:hidden;
+}
+.panel-head {
+  padding:11px 14px; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; justify-content:space-between;
+}
+.panel-title { font-size:10px; font-weight:700; color:var(--muted); letter-spacing:.12em; text-transform:uppercase; }
+.panel-blink { width:6px; height:6px; border-radius:50%; background:var(--green); animation:blink 1.5s infinite; margin-right:6px; }
+.clear-btn { font-size:9px; color:var(--border2); background:none; border:none; letter-spacing:.1em; text-transform:uppercase; transition:color .15s; }
+.clear-btn:hover { color:var(--muted); }
+#log-scroll { height:360px; overflow-y:auto; padding:8px 12px; }
+.log-entry { display:flex; gap:8px; margin-bottom:4px; font-size:11px; animation:fadein .2s ease; }
+.log-time   { color:var(--border); flex-shrink:0; }
+.log-info    { color:var(--muted); }
+.log-success { color:#4ade80; }
+.log-warn    { color:#fb923c; }
+.log-error   { color:#f87171; }
+.log-empty   { color:var(--border); font-size:11px; text-align:center; margin-top:40px; }
+
+/* Quick Actions */
+#actions-panel {
+  background:var(--bg2); border:1px solid var(--border); border-radius:12px; overflow:hidden;
+}
+.actions-body { padding:12px 14px; }
+.actions-sub { font-size:10px; color:var(--border2); letter-spacing:.1em; text-transform:uppercase; margin-bottom:8px; }
+.actions-row { display:flex; flex-wrap:wrap; gap:6px; }
+.action-btn {
+  font-size:9px; padding:5px 11px; border-radius:5px; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase;
+  border:1px solid var(--border); background:var(--bg); color:var(--dim);
+  transition:all .15s;
+}
+.action-btn:hover { border-color:var(--border2); color:var(--text); }
+
+/* Device Info */
+#info-panel {
+  background:var(--bg2); border:1px solid var(--border); border-radius:12px; overflow:hidden;
+}
+.info-grid { padding:12px 14px; display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.info-cell { }
+.info-key { font-size:9px; color:var(--border2); letter-spacing:.1em; text-transform:uppercase; margin-bottom:2px; }
+.info-val { font-size:13px; font-weight:700; color:var(--muted); }
+.info-val.live { color:var(--cyan); }
+
+/* ─── Spinner ──────────────────────────────────────────────── */
+#conn-spinner { display:none; width:14px; height:14px; border:2px solid var(--border); border-top-color:var(--cyan); border-radius:50%; animation:spin .6s linear infinite; }
+
+/* ─── Toast ────────────────────────────────────────────────── */
+#toast {
+  position:fixed; bottom:28px; right:28px; z-index:999;
+  background:#0d2233; border:1px solid #06b6d455; border-radius:10px;
+  padding:10px 18px; font-size:12px; color:#67e8f9;
+  display:none; animation:fadein .2s ease;
+  box-shadow:0 4px 20px #00000088;
+}
+</style>
+</head>
+<body>
+
+<!-- ─── Top Bar ──────────────────────────────────────────── -->
+<div id="topbar">
+  <div class="brand">
+    <div>
+      <div class="brand-title">ESP32</div>
+      <div class="brand-sub">Pin Controller</div>
+    </div>
+    <div class="divider"></div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="status-dot offline" id="status-dot"></div>
+      <span class="status-text offline" id="status-text">OFFLINE</span>
+    </div>
+    <div id="conn-spinner"></div>
+  </div>
+
+  <div class="conn-row">
+    <div class="ip-box">
+      <span>ws://</span>
+      <input id="ip-input" value="192.168.1.100" placeholder="ESP32 IP" />
+      <span>/ws</span>
+    </div>
+    <button class="btn btn-connect" id="conn-btn" onclick="toggleConnect()">CONNECT</button>
+  </div>
+</div>
+
+<!-- ─── Content ─────────────────────────────────────────── -->
+<div id="content">
+
+  <!-- Stats -->
+  <div id="stats">
+    <div class="stat-card" style="--accent:var(--cyan)">
+      <div class="stat-label">Pins HIGH</div>
+      <div class="stat-value" id="s-high">0</div>
+      <div class="stat-sub" id="s-high-sub">of 24 total</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--blue)">
+      <div class="stat-label">Output Mode</div>
+      <div class="stat-value" id="s-out">0</div>
+      <div class="stat-sub">pins configured</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--purple)">
+      <div class="stat-label">PWM Active</div>
+      <div class="stat-value" id="s-pwm">0</div>
+      <div class="stat-sub">channels running</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--amber)">
+      <div class="stat-label">Free Heap</div>
+      <div class="stat-value" id="s-heap">—</div>
+      <div class="stat-sub">bytes</div>
+    </div>
+    <div class="stat-card" style="--accent:var(--green)">
+      <div class="stat-label">Uptime</div>
+      <div class="stat-value" id="s-uptime">—</div>
+      <div class="stat-sub">seconds</div>
+    </div>
+    <div class="stat-card" style="--accent:#f97316">
+      <div class="stat-label">WiFi RSSI</div>
+      <div class="stat-value" id="s-rssi">—</div>
+      <div class="stat-sub">dBm</div>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div id="main">
+
+    <!-- Left: Pin Grid -->
+    <div>
+      <div id="filter-bar">
+        <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+        <button class="filter-btn" onclick="setFilter('output',this)">Output</button>
+        <button class="filter-btn" onclick="setFilter('input',this)">Input</button>
+        <button class="filter-btn" onclick="setFilter('high',this)">High</button>
+        <button class="filter-btn" onclick="setFilter('adc',this)">ADC</button>
+        <span id="pin-count"></span>
+      </div>
+      <div id="pin-grid"></div>
+    </div>
+
+    <!-- Right: Side Panel -->
+    <div id="side">
+
+      <!-- Log -->
+      <div id="log-panel">
+        <div class="panel-head">
+          <div style="display:flex;align-items:center">
+            <div class="panel-blink"></div>
+            <span class="panel-title">Serial Log</span>
+          </div>
+          <button class="clear-btn" onclick="clearLog()">CLEAR</button>
+        </div>
+        <div id="log-scroll">
+          <div class="log-empty" id="log-empty">No events yet…</div>
+        </div>
+      </div>
+
+      <!-- Quick Actions -->
+      <div id="actions-panel">
+        <div class="panel-head">
+          <span class="panel-title">Quick Actions</span>
+        </div>
+        <div class="actions-body">
+          <div class="actions-row">
+            <button class="action-btn" onclick="allHigh()">ALL HIGH</button>
+            <button class="action-btn" onclick="allLow()">ALL LOW</button>
+            <button class="action-btn" onclick="resetPins()">RESET</button>
+            <button class="action-btn" onclick="sendPing()">PING</button>
+            <button class="action-btn" onclick="toggleAllPwm()">PWM ALL</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Device Info -->
+      <div id="info-panel">
+        <div class="panel-head"><span class="panel-title">Device Info</span></div>
+        <div class="info-grid">
+          <div class="info-cell">
+            <div class="info-key">IP Address</div>
+            <div class="info-val" id="info-ip">—</div>
+          </div>
+          <div class="info-cell">
+            <div class="info-key">Model</div>
+            <div class="info-val">ESP32</div>
+          </div>
+          <div class="info-cell">
+            <div class="info-key">Protocol</div>
+            <div class="info-val">WebSocket</div>
+          </div>
+          <div class="info-cell">
+            <div class="info-key">Baud</div>
+            <div class="info-val">115200</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- ─── Script ───────────────────────────────────────────── -->
+<script>
+// ════════════════════════════════════════════════════════════
+//  PIN DEFINITIONS  (matches firmware)
+// ════════════════════════════════════════════════════════════
+const PIN_DEFS = [
+  { gpio:0,  label:"GPIO 0",  type:"io",    special:"BOOT",       defaultMode:"input"  },
+  { gpio:2,  label:"GPIO 2",  type:"io",    special:"LED",        defaultMode:"output" },
+  { gpio:4,  label:"GPIO 4",  type:"io",    special:null,         defaultMode:"output" },
+  { gpio:5,  label:"GPIO 5",  type:"io",    special:"SPI CS",     defaultMode:"output" },
+  { gpio:12, label:"GPIO 12", type:"io",    special:"SPI MISO",   defaultMode:"input"  },
+  { gpio:13, label:"GPIO 13", type:"io",    special:"SPI MOSI",   defaultMode:"output" },
+  { gpio:14, label:"GPIO 14", type:"io",    special:"SPI CLK",    defaultMode:"output" },
+  { gpio:15, label:"GPIO 15", type:"io",    special:null,         defaultMode:"output" },
+  { gpio:16, label:"GPIO 16", type:"io",    special:"UART RX",    defaultMode:"input"  },
+  { gpio:17, label:"GPIO 17", type:"io",    special:"UART TX",    defaultMode:"output" },
+  { gpio:18, label:"GPIO 18", type:"io",    special:"I2C SDA",    defaultMode:"output" },
+  { gpio:19, label:"GPIO 19", type:"io",    special:"I2C SCL",    defaultMode:"output" },
+  { gpio:21, label:"GPIO 21", type:"io",    special:null,         defaultMode:"output" },
+  { gpio:22, label:"GPIO 22", type:"io",    special:null,         defaultMode:"output" },
+  { gpio:23, label:"GPIO 23", type:"io",    special:null,         defaultMode:"output" },
+  { gpio:25, label:"GPIO 25", type:"io",    special:"DAC 1",      defaultMode:"output" },
+  { gpio:26, label:"GPIO 26", type:"io",    special:"DAC 2",      defaultMode:"output" },
+  { gpio:27, label:"GPIO 27", type:"io",    special:null,         defaultMode:"output" },
+  { gpio:32, label:"GPIO 32", type:"adc",   special:"ADC 1/4",    defaultMode:"input"  },
+  { gpio:33, label:"GPIO 33", type:"adc",   special:"ADC 1/5",    defaultMode:"input"  },
+  { gpio:34, label:"GPIO 34", type:"input", special:"ADC 1/6",    defaultMode:"input"  },
+  { gpio:35, label:"GPIO 35", type:"input", special:"ADC 1/7",    defaultMode:"input"  },
+  { gpio:36, label:"GPIO 36", type:"input", special:"SENSOR VP",  defaultMode:"input"  },
+  { gpio:39, label:"GPIO 39", type:"input", special:"SENSOR VN",  defaultMode:"input"  },
+];
+
+const TYPE_COLOR = { io:"#3b82f6", adc:"#8b5cf6", input:"#f59e0b" };
+
+// ════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════
+let ws       = null;
+let connected = false;
+let filter   = "all";
+let pinState = {};   // { [gpio]: {mode,value,pwm,pwmDuty,adc} }
+let demoMode = false;
+let demoTimer = null;
+
+// Init local state
+PIN_DEFS.forEach(p => {
+  pinState[p.gpio] = {
+    mode:    p.type === "input" ? "input" : (p.defaultMode === "input" ? "input" : "output"),
+    value:   0,
+    pwm:     false,
+    pwmDuty: 128,
+    adc:     (p.type === "adc" || p.type === "input") ? Math.floor(Math.random()*4096) : null,
+    locked:  p.type === "input",
+  };
+});
+
+// ════════════════════════════════════════════════════════════
+//  WEBSOCKET
+// ════════════════════════════════════════════════════════════
+function toggleConnect() {
+  if (connected) { disconnect(); return; }
+  const ip = document.getElementById("ip-input").value.trim();
+  if (!ip) { showToast("Enter ESP32 IP address"); return; }
+  startConnect(ip);
+}
+
+function startConnect(ip) {
+  setSpinner(true);
+  addLog(`Connecting to ws://${ip}/ws …`, "info");
+  try {
+    ws = new WebSocket(`ws://${ip}/ws`);
+  } catch(e) {
+    addLog("WebSocket error: " + e.message, "error");
+    setSpinner(false);
+    return;
+  }
+
+  ws.onopen = () => {
+    connected = true;
+    demoMode = false;
+    clearInterval(demoTimer);
+    setSpinner(false);
+    setOnline(true, ip);
+    addLog(`Connected to ESP32 @ ${ip}`, "success");
+    document.getElementById("info-ip").textContent = ip;
+  };
+
+  ws.onmessage = (e) => {
+    try { handleMsg(JSON.parse(e.data)); } catch(_) {}
+  };
+
+  ws.onclose = () => {
+    if (connected) { addLog("Connection closed", "warn"); }
+    setOnline(false);
+    setSpinner(false);
+    connected = false;
+    ws = null;
+  };
+
+  ws.onerror = () => {
+    addLog(`Cannot reach ${ip} — enabling demo mode`, "warn");
+    setSpinner(false);
+    setOnline(false);
+    connected = false;
+    ws = null;
+    startDemoMode();
+  };
+
+  // Timeout
+  setTimeout(() => {
+    if (ws && ws.readyState !== WebSocket.OPEN) {
+      ws.close();
+      addLog("Connection timed out — enabling demo mode", "warn");
+      setSpinner(false);
+      startDemoMode();
+    }
+  }, 5000);
+}
+
+function disconnect() {
+  if (ws) { ws.close(); ws = null; }
+  clearInterval(demoTimer); demoMode = false;
+  setOnline(false);
+  connected = false;
+  addLog("Disconnected", "warn");
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  } else if (demoMode) {
+    simulateCommand(obj);
+  } else {
+    addLog("Not connected", "error");
+  }
+}
+
+function handleMsg(msg) {
+  if (msg.type === "status") {
+    // Update from ESP32
+    if (msg.heap)   document.getElementById("s-heap").textContent   = (msg.heap/1024).toFixed(1)+"k";
+    if (msg.uptime) document.getElementById("s-uptime").textContent = Math.floor(msg.uptime/1000);
+    if (msg.rssi)   document.getElementById("s-rssi").textContent   = msg.rssi;
+
+    if (msg.pins) {
+      msg.pins.forEach(p => {
+        if (pinState[p.gpio] !== undefined) {
+          pinState[p.gpio].mode    = p.mode;
+          pinState[p.gpio].value   = p.value;
+          pinState[p.gpio].pwm     = p.pwm;
+          pinState[p.gpio].pwmDuty = p.pwmDuty || pinState[p.gpio].pwmDuty;
+          if (p.adc !== undefined) pinState[p.gpio].adc = p.adc;
+        }
+      });
+      renderGrid();
+      updateStats();
+    }
+  } else if (msg.type === "pong") {
+    addLog(`PONG — uptime ${(msg.uptime/1000).toFixed(1)}s`, "success");
+  } else if (msg.type === "error") {
+    addLog("ESP32 error: " + msg.error, "error");
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  DEMO MODE (no real device)
+// ════════════════════════════════════════════════════════════
+function startDemoMode() {
+  demoMode = true;
+  connected = true;
+  setOnline(true, "DEMO");
+  addLog("Demo mode active — controls simulate locally", "info");
+  document.getElementById("info-ip").textContent = "DEMO";
+  document.getElementById("s-heap").textContent = "210k";
+  document.getElementById("s-rssi").textContent = "-52";
+
+  let up = 0;
+  demoTimer = setInterval(() => {
+    up++;
+    document.getElementById("s-uptime").textContent = up;
+    // Simulate ADC fluctuation
+    PIN_DEFS.forEach(p => {
+      if (p.type === "adc" || p.type === "input") {
+        pinState[p.gpio].adc = Math.min(4095, Math.max(0,
+          (pinState[p.gpio].adc || 2000) + Math.floor((Math.random()-.5)*400)
+        ));
+      }
+    });
+    updateStats();
+    renderGrid();
+  }, 1500);
+}
+
+function simulateCommand(obj) {
+  const { cmd, gpio, value, mode, duty, enable } = obj;
+  if (cmd === "set" && gpio !== undefined) {
+    pinState[gpio].value = value;
+    addLog(`GPIO ${gpio} → ${value ? "HIGH":"LOW"}`, value ? "success":"info");
+  } else if (cmd === "mode") {
+    pinState[gpio].mode = mode;
+    addLog(`GPIO ${gpio} mode → ${mode.toUpperCase()}`, "info");
+  } else if (cmd === "pwm") {
+    pinState[gpio].pwmDuty = duty;
+    pinState[gpio].pwm = enable;
+    addLog(`GPIO ${gpio} PWM ${enable?"enabled duty="+duty:"disabled"}`, "info");
+  } else if (cmd === "reset") {
+    PIN_DEFS.forEach(p => { if (p.type !== "input") { pinState[p.gpio].value = 0; pinState[p.gpio].pwm = false; } });
+    addLog("All pins reset to LOW", "warn");
+  } else if (cmd === "ping") {
+    addLog("PONG — demo mode", "success");
+  }
+  updateStats();
+  renderGrid();
+}
+
+// ════════════════════════════════════════════════════════════
+//  PIN ACTIONS
+// ════════════════════════════════════════════════════════════
+function togglePin(gpio) {
+  if (!connected) { showToast("Not connected"); return; }
+  const newVal = pinState[gpio].value === 1 ? 0 : 1;
+  send({ cmd:"set", gpio, value:newVal });
+}
+
+function setMode(gpio, mode) {
+  if (!connected) { showToast("Not connected"); return; }
+  send({ cmd:"mode", gpio, mode });
+}
+
+function togglePwm(gpio) {
+  if (!connected) return;
+  const s = pinState[gpio];
+  send({ cmd:"pwm", gpio, duty:s.pwmDuty, enable:!s.pwm });
+}
+
+function setPwmDuty(gpio, duty) {
+  pinState[gpio].pwmDuty = duty;
+  const pctEl = document.getElementById(`pwm-pct-${gpio}`);
+  if (pctEl) pctEl.textContent = Math.round((duty/255)*100)+"%";
+  if (pinState[gpio].pwm) send({ cmd:"pwm", gpio, duty, enable:true });
+}
+
+function allHigh() {
+  if (!connected) { showToast("Not connected"); return; }
+  PIN_DEFS.forEach(p => {
+    if (p.type !== "input" && pinState[p.gpio].mode === "output") {
+      send({ cmd:"set", gpio:p.gpio, value:1 });
+    }
+  });
+  addLog("All output pins → HIGH", "success");
+}
+function allLow()   { if (!connected) return; send({ cmd:"reset" }); }
+function resetPins(){ if (!connected) return; send({ cmd:"reset" }); }
+function sendPing() { if (!connected) return; send({ cmd:"ping" }); }
+function toggleAllPwm() {
+  if (!connected) return;
+  const anyPwm = PIN_DEFS.some(p => pinState[p.gpio].pwm);
+  PIN_DEFS.forEach(p => {
+    if (p.type !== "input" && pinState[p.gpio].mode === "output") {
+      send({ cmd:"pwm", gpio:p.gpio, duty:128, enable:!anyPwm });
+    }
+  });
+}
+
+// ════════════════════════════════════════════════════════════
+//  RENDER
+// ════════════════════════════════════════════════════════════
+function getFilteredPins() {
+  return PIN_DEFS.filter(p => {
+    const s = pinState[p.gpio];
+    if (filter === "all")    return true;
+    if (filter === "output") return s.mode === "output" && p.type !== "input";
+    if (filter === "input")  return s.mode === "input"  || p.type === "input";
+    if (filter === "high")   return s.value === 1;
+    if (filter === "adc")    return p.type === "adc" || p.type === "input";
+    return true;
+  });
+}
+
+function renderGrid() {
+  const grid  = document.getElementById("pin-grid");
+  const pins  = getFilteredPins();
+  document.getElementById("pin-count").textContent = `${pins.length} pins shown`;
+
+  // Update existing cards or rebuild
+  const existing = new Set([...grid.querySelectorAll(".pin-card")].map(el => +el.dataset.gpio));
+  const needed   = new Set(pins.map(p => p.gpio));
+
+  // Remove cards no longer needed
+  grid.querySelectorAll(".pin-card").forEach(el => {
+    if (!needed.has(+el.dataset.gpio)) el.remove();
+  });
+
+  // Add / update
+  pins.forEach((pin, idx) => {
+    const s   = pinState[pin.gpio];
+    const id  = `card-${pin.gpio}`;
+    let card  = document.getElementById(id);
+    if (!card) {
+      card = buildCard(pin);
+      grid.appendChild(card);
+    }
+    updateCard(card, pin, s);
+  });
+}
+
+function buildCard(pin) {
+  const div = document.createElement("div");
+  div.className = "pin-card";
+  div.dataset.gpio = pin.gpio;
+  div.id = `card-${pin.gpio}`;
+  return div;
+}
+
+function updateCard(card, pin, s) {
+  const isHigh    = s.value === 1;
+  const isOutput  = s.mode === "output";
+  const isInputOnly = pin.type === "input";
+  const isADC     = pin.type === "adc" || pin.type === "input";
+  const col       = TYPE_COLOR[pin.type];
+  const pct       = s.adc != null ? Math.round((s.adc/4095)*100) : 0;
+  const voltage   = s.adc != null ? ((s.adc/4095)*3.3).toFixed(2) : "0.00";
+
+  card.className = "pin-card" + (isHigh ? " high" : "");
+
+  card.innerHTML = `
+    <div class="top-line"></div>
+    <div class="pin-header">
+      <div>
+        <div>
+          <span class="pin-label">${pin.label}</span>
+          <span class="pin-badge" style="background:${col}22;color:${col};border:1px solid ${col}44">${pin.type.toUpperCase()}</span>
+        </div>
+        ${pin.special ? `<div class="pin-special">${pin.special}</div>` : ""}
+      </div>
+      <div class="led"></div>
+    </div>
+
+    ${isADC && s.adc != null ? `
+      <div class="adc-wrap">
+        <div class="adc-row"><span>${s.adc} / 4095</span><span>${voltage}V</span></div>
+        <div class="adc-track"><div class="adc-fill" style="width:${pct}%"></div></div>
+      </div>` : ""}
+
+    ${!isInputOnly ? `
+      <div class="mode-row">
+        <button class="mode-btn ${s.mode==="input"?"active":""}" onclick="setMode(${pin.gpio},'input')">INPUT</button>
+        <button class="mode-btn ${s.mode==="output"?"active":""}" onclick="setMode(${pin.gpio},'output')">OUTPUT</button>
+      </div>` : ""}
+
+    ${isOutput && !isInputOnly ? `
+      <button class="toggle-btn ${isHigh?"high":"low"}" onclick="togglePin(${pin.gpio})">
+        ${isHigh ? "● HIGH" : "○ LOW"}
+      </button>
+      <div class="pwm-row">
+        <button class="pwm-btn ${s.pwm?"active":""}" onclick="togglePwm(${pin.gpio})">PWM</button>
+        ${s.pwm ? `<span class="pwm-pct" id="pwm-pct-${pin.gpio}">${Math.round((s.pwmDuty/255)*100)}%</span>` : ""}
+      </div>
+      ${s.pwm ? `<input type="range" min="0" max="255" value="${s.pwmDuty}" oninput="setPwmDuty(${pin.gpio},+this.value)">` : ""}
+    ` : ""}
+
+    ${(isInputOnly || (s.mode === "input" && !isADC)) ? `
+      <div class="input-only-badge">${isInputOnly ? "INPUT ONLY" : `READ: ${isHigh?"HIGH":"LOW"}`}</div>` : ""}
+  `;
+}
+
+function updateStats() {
+  const all    = Object.values(pinState);
+  const high   = all.filter(p => p.value === 1).length;
+  const output = all.filter(p => p.mode === "output").length;
+  const pwm    = all.filter(p => p.pwm).length;
+  document.getElementById("s-high").textContent = high;
+  document.getElementById("s-out").textContent  = output;
+  document.getElementById("s-pwm").textContent  = pwm;
+  document.getElementById("s-high-sub").textContent = `of ${PIN_DEFS.length} total`;
+}
+
+// ════════════════════════════════════════════════════════════
+//  UI HELPERS
+// ════════════════════════════════════════════════════════════
+function setFilter(f, btn) {
+  filter = f;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+  if (btn) btn.classList.add("active");
+  renderGrid();
+}
+
+function setOnline(on, ip) {
+  const dot  = document.getElementById("status-dot");
+  const txt  = document.getElementById("status-text");
+  const btn  = document.getElementById("conn-btn");
+  dot.className  = "status-dot " + (on ? "online":"offline");
+  txt.className  = "status-text "+ (on ? "online":"offline");
+  txt.textContent= on ? (ip === "DEMO" ? "DEMO MODE" : "ONLINE") : "OFFLINE";
+  btn.className  = "btn " + (on ? "btn-disconnect":"btn-connect");
+  btn.textContent= on ? "DISCONNECT" : "CONNECT";
+}
+
+function setSpinner(show) {
+  document.getElementById("conn-spinner").style.display = show ? "block" : "none";
+}
+
+// ─── Log ─────────────────────────────────────────────────
+let logCount = 0;
+function addLog(msg, type="info") {
+  const scroll = document.getElementById("log-scroll");
+  const empty  = document.getElementById("log-empty");
+  if (empty) empty.remove();
+  const d = document.createElement("div");
+  d.className = "log-entry";
+  const now = new Date().toLocaleTimeString("en-US",{hour12:false});
+  d.innerHTML = `<span class="log-time">${now}</span><span class="log-${type}">${msg}</span>`;
+  scroll.insertBefore(d, scroll.firstChild);
+  logCount++;
+  if (logCount > 60) scroll.lastChild && scroll.removeChild(scroll.lastChild);
+}
+function clearLog() {
+  const scroll = document.getElementById("log-scroll");
+  scroll.innerHTML = '<div class="log-empty" id="log-empty">No events yet…</div>';
+  logCount = 0;
+}
+
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  setTimeout(() => { t.style.display="none"; }, 2500);
+}
+
+// ════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════
+renderGrid();
+updateStats();
+addLog("Dashboard ready — enter ESP32 IP and click CONNECT", "info");
+addLog("If no device found, demo mode activates automatically", "info");
+</script>
+</body>
+</html>
